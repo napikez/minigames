@@ -53,18 +53,15 @@ async def inline_game_request(inline_query: InlineQuery):
     target_username = inline_query.query.strip().replace("@", "")
     challenger = inline_query.from_user
 
-    # Если юзернейм еще не ввели (или ввели только @), ничего не показываем
     if not target_username:
         return
 
     results = []
     
-    # Перебираем все игры из словаря и создаем для каждой пункт меню
     for game_id, game_info in GAMES.items():
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text=f"🎮 Принять вызов ({game_info['name']})", 
-                # Передаем game_id в callback_data, чтобы знать, во что играем
                 callback_data=f"start_gm:{game_id}:{target_username}:{challenger.id}"
             )]
         ])
@@ -82,7 +79,6 @@ async def inline_game_request(inline_query: InlineQuery):
             )
         )
     
-    # Отправляем список игр в Telegram (появятся над полем ввода)
     await inline_query.answer(results, cache_time=1, is_personal=True)
 
 # ---------------------------------------------------------
@@ -90,23 +86,24 @@ async def inline_game_request(inline_query: InlineQuery):
 # ---------------------------------------------------------
 @router.callback_query(F.data.startswith("start_gm:"))
 async def process_game_accept(callback: CallbackQuery):
-    # Разбираем callback_data (теперь там 4 элемента)
     data = callback.data.split(":")
-    action = data[0]
     game_id = data[1]
-    target_username = data[2]
-    challenger_id = data[3]
+    target_username = data[2].lower()
     
     clicker_username = callback.from_user.username
 
-    # Защита от чужих кликов (Эфемерное сообщение)
-    if clicker_username != target_username:
+    # Защита 1: если у аккаунта вообще нет юзернейма
+    if not clicker_username:
+        await callback.answer("❌ У твоего аккаунта нет юзернейма!", show_alert=True)
+        return
+
+    # Защита 2: если нажал не тот человек
+    if clicker_username.lower() != target_username:
         await callback.answer("❌ Этот вызов не для тебя!", show_alert=True)
         return
 
     await callback.answer("Игра началась!")
     
-    # Генерация UI в зависимости от того, какую игру выбрали в меню
     game_name = GAMES[game_id]["name"]
     
     if game_id == "ttt":
@@ -134,7 +131,6 @@ async def process_game_accept(callback: CallbackQuery):
         </widget>
         """
     else:
-        # Для кубиков или других игр
         html_widget_ui = f"""
         <widget>
             <h2>{game_name} 1v1</h2>
@@ -142,10 +138,20 @@ async def process_game_accept(callback: CallbackQuery):
         </widget>
         """
 
-    await callback.message.edit_text(
-        text=f"🎮 <b>Дуэль началась!</b>\n\n{html_widget_ui}",
-        parse_mode="HTML"
-    )
+    # ПРАВИЛЬНОЕ ОБНОВЛЕНИЕ ДЛЯ ИНЛАЙН-РЕЖИМА
+    if callback.inline_message_id:
+        await callback.bot.edit_message_text(
+            inline_message_id=callback.inline_message_id,
+            text=f"🎮 <b>Дуэль началась!</b>\n\n{html_widget_ui}",
+            parse_mode="HTML"
+        )
+    else:
+        # Резервный вариант, если вдруг игра запущена не через инлайн
+        if callback.message:
+            await callback.message.edit_text(
+                text=f"🎮 <b>Дуэль началась!</b>\n\n{html_widget_ui}",
+                parse_mode="HTML"
+            )
 
 # ---------------------------------------------------------
 # ВЕБ-СЕРВЕР ДЛЯ RENDER
@@ -157,7 +163,6 @@ async def main():
     dp.include_router(router)
     
     await bot.delete_webhook(drop_pending_updates=True)
-    
     asyncio.create_task(dp.start_polling(bot))
     
     app = web.Application()
